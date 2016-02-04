@@ -1,0 +1,103 @@
+#!/bin/bash
+
+Script_Version=1.0
+
+function help(){
+bn=`basename $0`
+cat << EOF
+Script File Version = $Script_Version
+
+Example:sudo $bn -i /dev/sdx -o xxx.img -c 1024
+     or:sudo $bn -i=/dev/sdx -o=xxx.img -c=1024
+     or:sudo $bn --if /dev/sdx --of xxx.img --count 1024
+     or:sudo $bn --if=/dev/sdx --of=xxx.img --count=1024
+options:
+        -i | --if    : dd command input flags
+        -o | --of    : dd command output flags
+        -c | --count : copy only N input blocks
+        -h | --help  : display this help and exit
+EOF
+exit 0
+}
+
+args=`getopt -o hi:o:c: -al if:,of:,count:,help -- "$@"`
+eval set -- "$args"
+while [ -n "$1" ]
+do
+    case "$1" in
+        -h|--help) help; shift 2;;
+        -i|--if) if=$2; shift 2;;
+        -o|--of) of=$2; shift 2;;
+        -c|--count) count=$2; shift 2;;
+        --) break ;;
+        *) help; break ;
+    esac
+done
+
+if [ -z $if ];then
+help
+exit 1
+fi
+if [ -z $of ];then
+help
+exit 2
+elif [[ $of = /dev/sda* ]];then
+echo "$of 不要作死"
+exit 3
+elif [[ $of = /dev/sdb* ]];then
+echo "$of 不要作死"
+exit 3
+fi
+
+DD_COUNT=false
+if [ ! -z $count ];then
+echo $count | grep -q '^[-]\?[0-9]\+$' && DD_COUNT=true || DD_COUNT=false
+fi
+
+if [ `whoami` != "root" ];then
+echo "please use root ~!"
+exit 1
+fi
+
+if [[ $if = /dev/sd* ]];then
+  if [[ $DD_COUNT = "false" ]];then
+     ifsize=`sudo sfdisk -s $if`
+     let ifsize=$ifsize*1024
+  else
+     let ifsize=$count*1024*1024
+  fi
+else
+ifsize=`du -b $if | awk '{print $1}'`
+fi
+
+if [ $DD_COUNT = "true" ];then
+sudo dd if=$if of=$of bs=1M count=$count 2> .ddloding &
+CPID=$!
+else
+sudo dd if=$if of=$of bs=1M 2> .ddloding &
+CPID=$!
+fi
+
+while [ 1 ]
+do
+sudo kill -USR1 $CPID
+sleep 0.5s
+ofsize=`tail -n1 .ddloding | awk '{print $1}'`
+if [ -z $ofsize ];then
+ofsize=0
+fi
+usetime=`tail -n1 .ddloding | awk '{print $6}'`
+per=`echo "scale=2;$ofsize*100/$ifsize" | bc`
+usetime=${usetime%.*}
+speed=`tail -n1 .ddloding | awk '{print $8}'`
+echo -en "\r\e[1;33m$ofsize/\e[0m"
+echo -en "\e[1;31m$ifsize Bytes\e[0m"
+echo -en "\e[1;33m $per%\e[0m"
+echo -en "\e[1;34m Use: ${usetime}s\e[0m"
+echo -en "\e[1;32m Speed: ${speed}MB/S \e[0m"
+if [ ! -d "/proc/$CPID" ];then
+sync
+echo -e "\n\e[1;33mdd Done~!\e[0m"
+break;
+fi
+done
